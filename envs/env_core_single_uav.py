@@ -102,13 +102,28 @@ class EnvCore(object):
         uav_loads = [0] * self.n_uavs
         
         # --- 1. 动作解析 ---
+        #0304修改act映射方式
+        # env_core.py 中用户的动作解析部分
         for u_idx, act in enumerate(user_actions_raw):
-            assoc_idx = int(np.round(act[0]))
-            assoc_idx = np.clip(assoc_idx, 0, self.n_uavs) 
-            ratio = np.clip(act[1], 0.0, 1.0)
+            # 1. 卸载比例用 tanh 平滑映射到 [0, 1]
+            ratio = 0.5 * (np.tanh(act[1]) + 1.0)
+            
+            # 2. 连接选择：用 tanh 把 act[0] 映射到 [-1, 1] 之间
+            # 然后均分成 self.n_uavs + 1 (本地) 份
+            choice_val = np.tanh(act[0]) 
+            
+            # 假设 n_uavs = 3，总共有 4 个选项 (0本地, 1连U0, 2连U1, 3连U2)
+            # [-1, -0.5) -> 本地
+            # [-0.5, 0) -> UAV_0
+            # [0, 0.5) -> UAV_1
+            # [0.5, 1] -> UAV_2
+            total_options = self.n_uavs + 1
+            # 把 [-1, 1] 映射到 [0, total_options - 0.001]
+            mapped_val = (choice_val + 1.0) / 2.0 * (total_options - 1e-5)
+            assoc_idx = int(mapped_val)
             
             if assoc_idx == 0 or ratio < 0.01:
-                associations[u_idx] = -1 
+                associations[u_idx] = -1  # 本地计算
                 offloading_ratios[u_idx] = 0.0
             else:
                 target_uav = assoc_idx - 1
@@ -123,21 +138,34 @@ class EnvCore(object):
         uav_out_of_bound = [False] * self.n_uavs # [新增] 记录是否出界
 
         for m_idx, act in enumerate(uav_actions_raw):
-            vel = np.array([act[0], act[1]])
-            v_mag = np.linalg.norm(vel)
-            if v_mag > self.base.uav_v_max:
-                vel = vel / v_mag * self.base.uav_v_max
-                v_mag = self.base.uav_v_max
+            
+            # ========================================================
+            # [完美修改版：基于 Tanh 的极坐标速度映射]
+            # act[0] 控制油门大小 (映射到 0 ~ 1 之间)
+            # act[1] 控制飞行方向 (映射到 -π ~ π 之间)
+            # ========================================================
+            
+            # 1. 速度比例 (使用 tanh 将实数平滑压缩到 [0, 1] 区间)
+            v_ratio = 0.5 * (np.tanh(act[0]) + 1.0)
+            
+            # 2. 飞行方向 (使用 tanh 压缩到 [-1, 1]，然后乘以 π)
+            angle = np.tanh(act[1]) * np.pi
+            
+            # 3. 计算真实速度大小 (比率 * 物理最大速度)
+            v_mag = v_ratio * self.base.uav_v_max
+            
+            # 4. 分解为 X 和 Y 方向的真实速度
+            vel = np.array([v_mag * np.cos(angle), v_mag * np.sin(angle)])
             
             # 更新位置
             new_pos = self.uavs[m_idx]['pos'] + vel * self.base.time_step
             
-            # [新增] 检查是否撞墙 (给一个额外惩罚)
+            # 检查是否撞墙 (给一个额外惩罚)
             if (new_pos[0] < 0 or new_pos[0] > 500 or 
                 new_pos[1] < 0 or new_pos[1] > 500):
                 uav_out_of_bound[m_idx] = True
 
-            self.uavs[m_idx]['pos'] = np.clip(new_pos, 0, 550)
+            self.uavs[m_idx]['pos'] = np.clip(new_pos, 0, 500)
             
             e_fly = self.engine.compute_uav_energy(v_mag)
             uav_fly_energies.append(e_fly)

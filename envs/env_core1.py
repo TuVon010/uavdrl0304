@@ -104,7 +104,8 @@ class EnvCore(object):
         for u_idx, act in enumerate(user_actions_raw):
             assoc_idx = int(np.round(act[0]))
             assoc_idx = np.clip(assoc_idx, 0, self.n_uavs) 
-            ratio = np.clip(act[1], 0.0, 1.0)
+            # 新代码：使用 tanh 映射到 [-1, 1]，再平移缩放到 [0, 1]
+            ratio = 0.5 * (np.tanh(act[1]) + 1.0)
             
             if assoc_idx == 0 or ratio < 0.01:
                 associations[u_idx] = -1 
