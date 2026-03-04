@@ -20,7 +20,7 @@ parent_dir = os.path.abspath(os.path.join(os.getcwd(), "."))
 # Append the parent directory to sys.path, otherwise the following import will fail
 sys.path.append(parent_dir)
 
-from config import get_config
+from config_single_uav import get_config
 from envs.env_wrappers import DummyVecEnv
 
 """Train script for MPEs."""
@@ -32,7 +32,7 @@ def make_train_env(all_args):
             # TODO 注意注意，这里选择连续还是离散可以选择注释上面两行，或者下面两行。
             # TODO Important, here you can choose continuous or discrete action space by uncommenting the above two lines or the below two lines.
 
-            from envs.env_continuous import ContinuousActionEnv
+            from envs.env_continuous_single_uav import ContinuousActionEnv
 
             env = ContinuousActionEnv()
 
@@ -53,7 +53,7 @@ def make_eval_env(all_args):
         def init_env():
             # TODO 注意注意，这里选择连续还是离散可以选择注释上面两行，或者下面两行。
             # TODO Important, here you can choose continuous or discrete action space by uncommenting the above two lines or the below two lines.
-            from envs.env_continuous import ContinuousActionEnv
+            from envs.env_continuous_single_uav import ContinuousActionEnv
 
             env = ContinuousActionEnv()
             # from envs.env_discrete import DiscreteActionEnv
@@ -69,7 +69,7 @@ def make_eval_env(all_args):
 def parse_args(args, parser):
     parser.add_argument("--scenario_name", type=str, default="MyEnv", help="Which scenario to run on")
     parser.add_argument("--num_landmarks", type=int, default=3)
-    parser.add_argument("--num_agents", type=int, default=13, help="number of players")
+    parser.add_argument("--num_agents", type=int, default=5, help="number of players")  # <--- 改成 5#智能体个数
 
     all_args = parser.parse_known_args(args)[0]
 
@@ -118,17 +118,17 @@ def main(args):
         os.makedirs(str(run_dir))
 
     if not run_dir.exists():
-        curr_run = "run1"
+        curr_run = "single_uav_run1"
     else:
         exst_run_nums = [
-            int(str(folder.name).split("run")[1])
+            int(str(folder.name).split("single_uav_run")[1])
             for folder in run_dir.iterdir()
-            if str(folder.name).startswith("run")
+            if str(folder.name).startswith("single_uav_run")
         ]
         if len(exst_run_nums) == 0:
-            curr_run = "run1"
+            curr_run = "single_uav_run1"
         else:
-            curr_run = "run%i" % (max(exst_run_nums) + 1)
+            curr_run = "single_uav_run%i" % (max(exst_run_nums) + 1)
     run_dir = run_dir / curr_run
     if not run_dir.exists():
         os.makedirs(str(run_dir))
@@ -166,7 +166,7 @@ def main(args):
     if all_args.share_policy:
         from runner.shared.env_runner import EnvRunner as Runner
     else:
-        from runner.separated.env_runner import EnvRunner as Runner
+        from runner.separated.env_runner_single_uav import EnvRunner as Runner
 
     runner = Runner(config)
     runner.run()

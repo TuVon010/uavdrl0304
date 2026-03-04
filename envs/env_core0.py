@@ -1,7 +1,7 @@
 import numpy as np
 from envs.Base import Base
 from envs.physics_engine import PhysicsEngine
-
+#0215奖励函数修改回线性模型
 class EnvCore(object):
     """
     异构多智能体环境核心 (Padding Version - Fixed)
@@ -65,8 +65,8 @@ class EnvCore(object):
         for i in range(self.n_users):
             # 使用高斯分布生成位置 (密集聚集)
             # loc=中心, scale=标准差(聚集程度, 越小越密集)
-            user_x = np.random.normal(loc=center_x, scale=40.0) 
-            user_y = np.random.normal(loc=center_y, scale=40.0)
+            user_x = np.random.normal(loc=center_x, scale=20.0) 
+            user_y = np.random.normal(loc=center_y, scale=20.0)
             
             # 必须 Clip 防止由于概率极低事件飞出地图
             user_x = np.clip(user_x, 0, 500)
@@ -135,7 +135,7 @@ class EnvCore(object):
                 new_pos[1] < 0 or new_pos[1] > 500):
                 uav_out_of_bound[m_idx] = True
 
-            self.uavs[m_idx]['pos'] = np.clip(new_pos, 0, 500)
+            self.uavs[m_idx]['pos'] = np.clip(new_pos, 0, 550)
             
             e_fly = self.engine.compute_uav_energy(v_mag)
             uav_fly_energies.append(e_fly)
@@ -232,22 +232,18 @@ class EnvCore(object):
             numerator = t_local_list[u] - user_latencies[u]          # 实际省下的时间 (可能是负的).0214 17:00,增大调正
             denominator = t_local_list[u] - t_ideal_list[u] + 1e-9   # 理论最大能省下的时间
             rate = numerator / denominator
-            # 限制速率范围在 [-1.0, 1.0]，防止除以极小值或传输极差导致梯度爆炸
-            saving_rates.append(np.clip(rate, -1.0, 1.0))
+            # 限制在 [-1, 1] 之间，线性奖励对范围很敏感
+            saving_rates.append(np.clip(rate, -10.0, 10.0))
             
-        avg_saving_rate = np.mean(saving_rates) # 全局平均节省率
+        avg_saving_rate = np.mean(saving_rates) 
         
         # --- User Reward ---
         for u in range(self.n_users):
             prio = self.base.omega_H if self.users[u]['priority'] else self.base.omega_L
             
-            # 1. 节省率奖励 (正分核心！)
-            # r_saving = self.base.w_saving * saving_rates[u] * prio
-            # 逻辑：
-            # saving_rate = 0.0 -> reward = 1.0 (基础分)
-            # saving_rate = 1.0 -> reward = 2.7 (高分)
-            # 这样越接近 1.0，梯度越陡峭，智能体会为了最后 1% 的提升而努力
-            r_saving = self.base.w_saving * (np.exp(2*(saving_rates[u]) - 1)) * prio
+            # [修改 1] 改回线性奖励
+            # 逻辑：Rate 从 -0.5 提升到 0.5，奖励线性增加，梯度恒定，动力更足
+            r_saving = self.base.w_saving * saving_rates[u] * prio
             
             # 2. 能耗惩罚 (线性归一化)
             eng_norm = user_energies[u] / self.base.norm_energy_user
@@ -288,8 +284,11 @@ class EnvCore(object):
                 # 1. 服务奖励：根据它服务的用户的平均节省率给分
                 cluster_rates = [saving_rates[u] for u in cluster_users]
                 avg_cluster_rate = np.mean(cluster_rates)
-                #线性改成exp
-                r_service = self.base.w_saving * np.exp(avg_cluster_rate-1) * len(cluster_users)
+                
+                # [修改 2] 改回线性奖励
+                # 简单直接：平均节省率 * 服务人数 * 权重
+                # 只要能提升一点点节省率，分就蹭蹭涨，这会逼着UAV贴脸服务
+                r_service = self.base.w_saving * avg_cluster_rate * len(cluster_users)
                 
                 cluster_positions = np.array([self.users[uid]['position'] for uid in cluster_users])
                 target_pos = np.mean(cluster_positions, axis=0)
@@ -298,7 +297,6 @@ class EnvCore(object):
                 r_service = -5.0 
                 target_pos = center_of_all_users
 
-            # 2. 能耗惩罚
             uav_eng_norm = total_uav_energy / self.base.norm_energy_uav
             r_uav_energy = -self.base.w_energy * uav_eng_norm
 

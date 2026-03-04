@@ -1,7 +1,7 @@
 import gym
 from gym import spaces
 import numpy as np
-from envs.env_core import EnvCore
+from envs.env_core_single_uav import EnvCore
 
 class ContinuousActionEnv(object):
     """

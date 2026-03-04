@@ -8,7 +8,8 @@ import torch
 
 from utils.util import update_linear_schedule
 from runner.separated.base_runner import Runner
-
+# 文件顶部，大约在 import torch 下方加入这一行
+from envs.Base_single_uav import Base
 
 def _t2n(x):
     return x.detach().cpu().numpy()
@@ -17,6 +18,10 @@ def _t2n(x):
 class EnvRunner(Runner):
     def __init__(self, config):
         super(EnvRunner, self).__init__(config)
+         # [新增] 动态读取配置，彻底消灭硬编码
+        base_config = Base()
+        self.n_users = base_config.n_users
+        self.n_uavs = base_config.n_uavs
         
         # 创建轨迹保存目录
         self.plot_dir = str(self.run_dir / 'trajectories')
@@ -107,7 +112,7 @@ class EnvRunner(Runner):
                     if 'pos' in agent_info:
                         trajectories[i].append(agent_info['pos'])
                     
-                    if i < 10: # User
+                    if i < self.n_users: # User
                         lat = agent_info.get('latency', 0)
                         eng = agent_info.get('energy', 0)
                         sav = agent_info.get('saving_rate', 0) # [NEW]
@@ -151,7 +156,7 @@ class EnvRunner(Runner):
                         
                         # [新增] 如果是最后一轮，收集 UAV 详细数据
                         if is_last_episode:
-                            uav_id = i - 10
+                            uav_id = i - self.n_users
                             pos = agent_info.get('pos', [0,0])
                             connected_users = agent_info.get('connected_users', [])
                             
@@ -172,11 +177,18 @@ class EnvRunner(Runner):
                 ep_time_cost_sum += step_cost_sum
                 ep_real_energy_sum += step_energy_sum
                 # 累加每个 step 的平均值到 episode 总和
-                # 比如：这个 slot 所有用户的平均 saving rate
-                ep_user_saving_rate_sum += (step_user_saving_rate / 10.0) 
+                # 比如：这个 slot 所有用户（4个）的平均 saving rate
+                # [修改前] ep_user_saving_rate_sum += (step_user_saving_rate / 4.0) 
+                ep_user_saving_rate_sum += (step_user_saving_rate / float(self.n_users))
                 # 这个 slot 所有 UAV 的平均距离
-                ep_uav_target_dist_sum += (step_uav_dist / 3.0)
-                ep_uav_min_dist_sum += (step_uav_min / 3.0)
+                # [修改前]
+                # ep_uav_target_dist_sum += (step_uav_dist / 3.0)
+                # ep_uav_min_dist_sum += (step_uav_min / 3.0)
+                # 这个 slot 所有 UAV 的平均距离 (恢复除法，变成动态)
+                # [修改前] ep_uav_target_dist_sum += step_uav_dist 
+                ep_uav_target_dist_sum += (step_uav_dist / float(self.n_uavs))
+                ep_uav_min_dist_sum += (step_uav_min / float(self.n_uavs))
+                
                 # [新增] 累加到 Episode 总和
                 ep_user_energy_sum += step_user_e
                 ep_uav_fly_energy_sum += step_uav_fly
@@ -271,8 +283,8 @@ class EnvRunner(Runner):
                     avg_rew = np.mean(self.buffer[agent_id].rewards) * self.episode_length
                     train_infos[agent_id].update({"average_episode_rewards": avg_rew})
                     
-                    # 2. 根据 ID 分组 (前10个是User，后3个是UAV)
-                    if agent_id < 10:
+                    # 2. 根据 ID 分组 (前4个是User，后1个是UAV)
+                    if agent_id < self.n_users:
                         user_rewards.append(avg_rew)
                     else:
                         uav_rewards.append(avg_rew)
@@ -317,16 +329,16 @@ class EnvRunner(Runner):
         # 颜色映射
         colors = plt.cm.get_cmap('tab10', self.num_agents)
         
-        # 画 Users (0-9)
-        for i in range(10):
+        # 画 Users (0-3)
+        for i in range(self.n_users):
             traj = np.array(trajectories[i])
             if len(traj) > 0:
                 # User 移动较慢，画成虚线或点
                 plt.plot(traj[:, 0], traj[:, 1], linestyle=':', alpha=0.5, color='gray')
                 plt.scatter(traj[-1, 0], traj[-1, 1], s=20, marker='o', label=f'U{i}' if i==0 else None, color='blue', alpha=0.5)
 
-        # 画 UAVs (10-12)
-        for i in range(10, self.num_agents):
+        # 画 UAVs (4)
+        for i in range(self.n_users, self.num_agents):
             traj = np.array(trajectories[i])
             if len(traj) > 0:
                 # UAV 画实线，带箭头或明显标记
@@ -356,7 +368,7 @@ class EnvRunner(Runner):
         
         # --- 1. 画 Users (0-9) ---
         # 为了不让图太乱，User 只画终点或淡色的轨迹
-        for i in range(10):
+        for i in range(self.n_users):
             traj = np.array(trajectories[i])
             if len(traj) > 0:
                 # 虚线轨迹
@@ -367,10 +379,10 @@ class EnvRunner(Runner):
                 plt.scatter(traj[-1, 0], traj[-1, 1], s=30, marker='o', label='Users' if i==0 else None, color='blue', alpha=0.6)
 
         # --- 2. 画 UAVs (10-12) ---
-        for i in range(10, self.num_agents):
+        for i in range(self.n_users, self.num_agents):
             traj = np.array(trajectories[i])
             if len(traj) > 0:
-                uav_id = i - 10
+                uav_id = i - self.n_users
                 color = cmap(uav_id) # 每个UAV不同颜色
                 
                 # 实线轨迹

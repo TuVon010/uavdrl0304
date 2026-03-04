@@ -32,7 +32,7 @@ def make_train_env(all_args):
             # TODO 注意注意，这里选择连续还是离散可以选择注释上面两行，或者下面两行。
             # TODO Important, here you can choose continuous or discrete action space by uncommenting the above two lines or the below two lines.
 
-            from envs.env_continuous import ContinuousActionEnv
+            from envs.env_continuous0 import ContinuousActionEnv
 
             env = ContinuousActionEnv()
 
@@ -53,7 +53,7 @@ def make_eval_env(all_args):
         def init_env():
             # TODO 注意注意，这里选择连续还是离散可以选择注释上面两行，或者下面两行。
             # TODO Important, here you can choose continuous or discrete action space by uncommenting the above two lines or the below two lines.
-            from envs.env_continuous import ContinuousActionEnv
+            from envs.env_continuous0 import ContinuousActionEnv
 
             env = ContinuousActionEnv()
             # from envs.env_discrete import DiscreteActionEnv
@@ -166,7 +166,7 @@ def main(args):
     if all_args.share_policy:
         from runner.shared.env_runner import EnvRunner as Runner
     else:
-        from runner.separated.env_runner import EnvRunner as Runner
+        from runner.separated.env_runner0 import EnvRunner as Runner
 
     runner = Runner(config)
     runner.run()
