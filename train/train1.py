@@ -4,7 +4,8 @@
 # @Email   : tinyzqh@163.com
 # @File    : train.py
 """
-
+#cuda:1
+#python ./train/train_single_uav.py
 # !/usr/bin/env python
 import sys
 import os
@@ -96,7 +97,7 @@ def main(args):
     # cuda
     if all_args.cuda and torch.cuda.is_available():
         print("choose to use gpu...")
-        device = torch.device("cuda:0")
+        device = torch.device("cuda:1")
         torch.set_num_threads(all_args.n_training_threads)
         if all_args.cuda_deterministic:
             torch.backends.cudnn.benchmark = False

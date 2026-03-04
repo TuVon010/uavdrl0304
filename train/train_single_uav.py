@@ -6,6 +6,13 @@
 """
 
 # !/usr/bin/env python
+
+# # 方案1：临时屏蔽（仅本次运行有效，推荐）
+# CUDA_VISIBLE_DEVICES=0 python ./train/train_single_uav.py
+
+# # 方案2：终端会话内永久屏蔽（本次登录服务器都生效）
+# export CUDA_VISIBLE_DEVICES=0  # 执行一次即可
+# python ./train/train_single_uav.py  # 后续运行都只用cuda:0
 import sys
 import os
 import socket

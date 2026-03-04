@@ -32,7 +32,7 @@ class Base:
         # =========================
         self.f_c = 2e9            
         self.c = 3e8              
-        self.alpha_los = 2.0      
+        self.alpha_los = 2.5      
         self.alpha_nlos = 3.5     
         self.a = 9.61             # LoS 概率参数
         self.b = 0.16
@@ -91,9 +91,9 @@ class Base:
         # 7. 奖励权重 (全新：基于节省率的得分系统)
         # =========================
         # 现在系统主要是为了“得分(正数)”，而不是“躲避惩罚(负数)”
-        self.w_saving = 10.0       # 节省率得分权重 (核心正奖励)
-        self.w_energy = 1       # 归一化能耗惩罚权重
-        self.w_guide = 1.0        # 引导权重 (稍微降低，让系统更依赖真实节省率)
+        self.w_saving = 20.0       # 节省率得分权重 (核心正奖励)
+        self.w_energy = 1.0       # 归一化能耗惩罚权重
+        self.w_guide = 50.0        # 引导权重 (稍微降低，让系统更依赖真实节省率)
         self.w_collision = 5.0    # 防碰撞惩罚权重
         self.w_penalty = 5.0      # 时延超标惩罚
         
