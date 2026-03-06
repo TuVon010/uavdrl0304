@@ -333,6 +333,7 @@ class EnvCore(object):
         avg_saving_rate = np.mean(saving_rates) 
         
         # --- User Reward ---
+        user_reward_details = [] # [核心新增] 暂存 User 奖励细项
         for u in range(self.n_users):
             prio = self.base.omega_H if self.users[u]['priority'] else self.base.omega_L
             
