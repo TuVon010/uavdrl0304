@@ -67,8 +67,8 @@ class EnvCore(object):
         for i in range(self.n_users):
             # 使用高斯分布生成位置 (密集聚集)
             # loc=中心, scale=标准差(聚集程度, 越小越密集)
-            user_x = np.random.normal(loc=center_x, scale=80.0) 
-            user_y = np.random.normal(loc=center_y, scale=80.0)
+            user_x = np.random.normal(loc=center_x, scale=25.0) 
+            user_y = np.random.normal(loc=center_y, scale=25.0)
             
             # 必须 Clip 防止由于概率极低事件飞出地图
             user_x = np.clip(user_x, 0, 1000)
@@ -79,7 +79,7 @@ class EnvCore(object):
                 'id': i,
                 'position': pos,
                 # 初始速度和方向随机，后续由 physics_engine 的 update_user_positions 接管 (GaussMarkov)
-                'velocity': np.random.uniform(0.1, 1), 
+                'velocity': np.random.uniform(0.0, 0.5), 
                 'direction': np.random.uniform(0, 2*np.pi),
                 'trajectory': [pos],
                 'task_size': np.random.uniform(self.base.task_size_min, self.base.task_size_max),
@@ -136,6 +136,11 @@ class EnvCore(object):
         
         uav_fly_energies = []
         uav_out_of_bound = [False] * self.n_uavs # [新增] 记录是否出界
+        # [新增] 获取当前全局中心，作为基础引导方向
+        all_user_pos_for_angle = np.array([u['position'] for u in self.users])
+        global_center_for_angle = np.mean(all_user_pos_for_angle, axis=0)
+        all_user_positions = np.array([u['position'] for u in self.users])
+        global_center = np.mean(all_user_positions, axis=0)
 
         for m_idx, act in enumerate(uav_actions_raw):
             
@@ -145,11 +150,46 @@ class EnvCore(object):
             # act[1] 控制飞行方向 (映射到 -π ~ π 之间)
             # ========================================================
             
-            # 1. 速度比例 (使用 tanh 将实数平滑压缩到 [0, 1] 区间)
-            v_ratio = 0.5 * (np.tanh(act[0]) + 1.0)
+            # # 1. 速度比例 (使用 tanh 将实数平滑压缩到 [0, 1] 区间)
+            # v_ratio = 0.5 * (np.tanh(act[0]) + 1.0)
+            # ========================================================
+            # [核心黑科技：残差角度引导 (Residual Angle)]
+            # 落实你的直觉：计算从无人机指向中心的"理想角度"
+            # ========================================================
+            # ========================================================
+            # 1. 判断无人机的目标和当前距离 (复用之前的关联逻辑)
+            # ========================================================
+            cluster_users = [u for u in associations if associations[u] == m_idx]
             
-            # 2. 飞行方向 (使用 tanh 压缩到 [-1, 1]，然后乘以 π)
-            angle = np.tanh(act[1]) * np.pi
+            if len(cluster_users) > 0:
+                # 如果有关联用户，计算局部中心和覆盖半径
+                cluster_positions = np.array([self.users[uid]['position'] for uid in cluster_users])
+                target_pos = np.mean(cluster_positions, axis=0)
+                # 简单估算密集区半径 (+15米容错)
+                radius = np.max(np.linalg.norm(cluster_positions - target_pos, axis=1)) + 15.0
+            else:
+                # 空载，看全局
+                target_pos = global_center
+                radius = np.max(np.linalg.norm(all_user_positions - target_pos, axis=1)) + 15.0
+
+            vec_to_target = target_pos - self.uavs[m_idx]['pos']
+            dist_to_target = np.linalg.norm(vec_to_target)
+            ideal_angle = np.arctan2(vec_to_target[1], vec_to_target[0])
+            
+            # ========================================================
+            # 2. 核心黑科技：动态切换方向盘范围
+            # ========================================================
+            v_ratio = 0.5 * (np.tanh(act[0]) + 1.0) # 速度比例 0~1
+            
+            if dist_to_target > radius:
+                # 【圈外：赶路模式】限制角度！
+                # 必须朝向目标前进，最大允许左右偏移 90 度 (np.pi/2)
+                angle = ideal_angle + np.tanh(act[1]) * (2*np.pi / 3.0)
+            else:
+                # 【圈内：微调/干活模式】彻底解放！
+                # 允许 360 度 (-π 到 π) 全向移动，方便躲避碰撞和覆盖边缘用户
+                # 【圈内】依然以目标为基准，但允许 360 度全向微调！
+                angle = ideal_angle + np.tanh(act[1]) * np.pi
             
             # 3. 计算真实速度大小 (比率 * 物理最大速度)
             v_mag = v_ratio * self.base.uav_v_max
@@ -288,7 +328,7 @@ class EnvCore(object):
             denominator = t_local_list[u] - t_ideal_list[u] + 1e-9   # 理论最大能省下的时间
             rate = numerator / denominator
             # 限制在 [-1, 1] 之间，线性奖励对范围很敏感
-            saving_rates.append(np.clip(rate, -10.0, 10.0))
+            saving_rates.append(np.clip(rate, -1.0, 1.0))
             
         avg_saving_rate = np.mean(saving_rates) 
         
@@ -313,74 +353,140 @@ class EnvCore(object):
                 r_penalty = -self.base.w_penalty
 
             r = r_saving + r_energy + r_coop + r_penalty
+            # [核心新增] 记录每个子项
+            user_reward_details.append({
+                'r_saving': r_saving,
+                'r_energy': r_energy,
+                'r_coop': r_coop,
+                'r_penalty': r_penalty,
+                'step_reward': r
+            })
             rewards.append(r)
             
         # --- UAV Reward ---
-        all_user_positions = np.array([u['position'] for u in self.users])
-        center_of_all_users = np.mean(all_user_positions, axis=0)
+        # --- UAV Reward ---
+        # all_user_positions = np.array([u['position'] for u in self.users])
+        # global_center = np.mean(all_user_positions, axis=0)
         
         # [NEW] 暂存 UAV 调试信息，以便传入 info
         uav_debug_stats = [{} for _ in range(self.n_uavs)]
 
         for m in range(self.n_uavs):
-            # [修正] UAV 总能耗 = 飞行 + 计算
+            # 1. 能耗惩罚 (全局生效，但权重适中)
             total_uav_energy = uav_fly_energies[m] + uav_comp_energies[m]
-            
-            # [修改1] 即使没有连接用户，也要承担全局时延的责任 (Cooperative Reward)
-            # 迫使 UAV 即使不服务也要关心系统状态，或者给一个空载惩罚
-            # 1. 能耗项 (线性归一化: -E/600)
             uav_eng_norm = total_uav_energy / self.base.norm_energy_uav
-            r_uav_energy = -self.base.w_energy * uav_eng_norm # 1. 能耗项 (线性归一化: -E/600),权重乘以归一化后的能耗
+            r_uav_energy = -self.base.w_energy * uav_eng_norm 
             
-            # 2. 服务质量项 (基于簇内时延)
+            # 2. 获取当前无人机关联的用户簇
             cluster_users = [u for u in associations if associations[u] == m]
             
+            # 初始化引导相关的变量
+            r_service = 0.0
+            r_guide = 0.0
+            dist_to_target = 0.0
+            
             if len(cluster_users) > 0:
-                # 1. 服务奖励：根据它服务的用户的平均节省率给分
-                cluster_rates = [saving_rates[u] for u in cluster_users]
-                avg_cluster_rate = np.mean(cluster_rates)
-                
-                # [修改 2] 改回线性奖励
-                # 简单直接：平均节省率 * 服务人数 * 权重
-                # 只要能提升一点点节省率，分就蹭蹭涨，这会逼着UAV贴脸服务
-                r_service = self.base.w_saving * avg_cluster_rate * len(cluster_users)
-                
+                # ====================================================
+                # 状态 A：有关联用户，提供服务并向【局部动态密集区】靠拢
+                # ====================================================
                 cluster_positions = np.array([self.users[uid]['position'] for uid in cluster_users])
                 target_pos = np.mean(cluster_positions, axis=0)
+                
+                # A-1: 计算服务奖励 (鼓励提升 Saving Rate)
+                cluster_rates = [saving_rates[u] for u in cluster_users]
+                avg_cluster_rate = np.mean(cluster_rates)
+                r_service = self.base.w_saving * np.exp(avg_cluster_rate - 1) * len(cluster_users)
+
+                # A-2: 动态密集区引导 (死区惩罚机制)
+                if len(cluster_users) <= 2:
+                    # 只有1-2人时，用简单的圆形缓冲圈
+                    max_dist = np.max(np.linalg.norm(cluster_positions - target_pos, axis=1))
+                    radius = max_dist + 15.0 # 给15米容错缓冲
+                    dist_to_target = np.linalg.norm(self.uavs[m]['pos'] - target_pos)
+                    
+                    if dist_to_target <= radius:
+                        r_guide = 0.0 # 进圈了，不惩罚！自由微调！
+                    else:
+                        out_of_range = dist_to_target - radius
+                        r_guide = -self.base.w_guide * (out_of_range / self.base.norm_pos) # 猛猛抽打！
+                else:
+                    # 有3人及以上，使用高级的【动态协方差椭圆】作为密集区边界
+                    cov_matrix = np.cov(cluster_positions.T) + np.eye(2) * 0.1 
+                    inv_cov = np.linalg.inv(cov_matrix)
+                    
+                    diff = self.uavs[m]['pos'] - target_pos
+                    m_dist_sq = np.dot(np.dot(diff, inv_cov), diff)
+                    m_dist = np.sqrt(np.abs(m_dist_sq))
+                    
+                    dist_to_target = np.linalg.norm(diff) # 仅用于统计记录
+                    
+                    ellipse_threshold = 2.0 # 包含约86%分布的马氏距离阈值
+                    if m_dist <= ellipse_threshold:
+                        r_guide = 0.0 # 进圈了，彻底解放！
+                    else:
+                        # 圈外惩罚：将超出椭圆的距离映射回物理尺度，并施加巨额惩罚
+                        eigvals = np.linalg.eigvals(cov_matrix)
+                        max_std = np.sqrt(np.max(eigvals)) 
+                        approx_out = (m_dist - ellipse_threshold) * max_std
+                        r_guide = -self.base.w_guide * (approx_out / self.base.norm_pos)
+
             else:
-                # [修改此处] 把固定的 -5.0 换成一个能提供移动梯度的惩罚
-                # 让它知道：越靠近中心，即便没有用户，被骂得也轻一点
-                dist_to_center = np.linalg.norm(self.uavs[m]['pos'] - center_of_all_users)
-                r_service = -5.0 - 10.0 * (dist_to_center / self.base.norm_pos) 
-                target_pos = center_of_all_users
+                # ====================================================
+                # 状态 B：空载怠工，必须向【全局用户密集区】靠拢寻找机会
+                # ====================================================
+                target_pos = global_center
+                dist_to_target = np.linalg.norm(self.uavs[m]['pos'] - target_pos)
+                
+                # B-1: 基础的怠工惩罚 (固定值，防止挂机)
+                r_service = -5.0 
+                
+                # B-2: 计算全局用户的动态椭圆
+                cov_matrix = np.cov(all_user_positions.T) + np.eye(2) * 0.1
+                inv_cov = np.linalg.inv(cov_matrix)
+                diff = self.uavs[m]['pos'] - target_pos
+                m_dist = np.sqrt(np.abs(np.dot(np.dot(diff, inv_cov), diff)))
+                
+                ellipse_threshold = 2.5 # 全局圈稍微放宽一点
+                if m_dist <= ellipse_threshold:
+                    r_guide = 0.0 # 只要混进大部队，哪怕没拉到客，也不再加倍扣距离分
+                else:
+                    eigvals = np.linalg.eigvals(cov_matrix)
+                    max_std = np.sqrt(np.max(eigvals))
+                    approx_out = (m_dist - ellipse_threshold) * max_std
+                    # 猛猛引导！只要在圈外，就狂扣分
+                    r_guide = -self.base.w_guide * (approx_out / self.base.norm_pos)
 
-            # 3. 距离引导 (减弱了引力，让系统更依赖真实的时延节省)
-            dist_to_target = np.linalg.norm(self.uavs[m]['pos'] - target_pos)
-            dist_norm = dist_to_target / self.base.norm_pos
-            r_guide = -self.base.w_guide * dist_norm
-
-            # 4. 防碰撞惩罚 (保持指数级，构建“虚拟墙”)
+            # 3. 防碰撞惩罚 (保持指数级，构建“虚拟墙”)
             r_collision = 0
-            min_dist_uav = 9999.0 # [NEW] 记录最小距离
+            min_dist_uav = 9999.0 
             for other_m in range(self.n_uavs):
                 if m == other_m: continue
                 dist_uav = np.linalg.norm(self.uavs[m]['pos'] - self.uavs[other_m]['pos'])
-                min_dist_uav = min(min_dist_uav, dist_uav) # Update min dist
+                min_dist_uav = min(min_dist_uav, dist_uav)
                 
                 if dist_uav < self.base.uav_safe_dist:
                     violation_norm = (self.base.uav_safe_dist - dist_uav) / self.base.uav_safe_dist
-                    r_collision -= self.base.w_collision * np.exp(np.clip(violation_norm, 0, 5))
+                    # 线性惩罚，最大扣分控制在 w_collision * 10 (即 -50 分)，既能避让又不会炸毁梯度
+                    r_collision -= self.base.w_collision * 10.0 * violation_norm
 
-            # 5. 撞墙惩罚
+            # 4. 撞墙出界惩罚
             r_bound = -10.0 if uav_out_of_bound[m] else 0.0
 
+            # 最终合并奖励
             r = r_service + r_uav_energy + r_guide + r_collision + r_bound
             rewards.append(r)
             
-            # [NEW] Save debug info
+            # 记录调试信息
+            # 记录调试信息和 [核心新增] 的奖励细项
             uav_debug_stats[m] = {
                 'uav_dist_to_target': dist_to_target,
-                'uav_min_dist': min_dist_uav
+                'uav_min_dist': min_dist_uav,
+                'r_service': r_service,
+                'r_uav_energy': r_uav_energy,
+                'r_guide': r_guide,
+                'r_collision': r_collision,
+                'r_bound': r_bound,
+                'step_reward': r 
             }
 
         for u in self.users:
@@ -415,6 +521,8 @@ class EnvCore(object):
                 info['t_tx'] = user_t_tx[i]
                 info['t_exe'] = user_t_exe[i]
                 info['t_loc'] = user_t_loc[i]
+                # [核心新增] 装入 User 奖励数据
+                info.update(user_reward_details[i])
 
             else:
                 # UAV info: 包含位置、飞行能耗
@@ -425,7 +533,7 @@ class EnvCore(object):
                 
                 # [新增] 连接的用户列表
                 info['connected_users'] = uav_connected_users_list[uav_idx]
-                # [UAV Metric] 把刚刚存的调试信息放进去
+                # [UAV Metric] 把刚刚存的调试信息(包含奖励细项)放进去
                 info.update(uav_debug_stats[uav_idx]) 
             infos.append(info)
 

@@ -2,6 +2,7 @@ import time
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse, Circle
 import pandas as pd  # [新增] 必须导入 pandas
 from itertools import chain
 import torch
@@ -68,7 +69,12 @@ class EnvRunner(Runner):
             is_record_episode = (episode % 10 == 0) or (episode == episodes - 1)
             ep_user_data = [] # 存储当前回合的用户文档数据
             ep_uav_data = []  # 存储当前回合的 UAV 文档数据
-
+            # [核心新增] 存储详细奖励的列表和累计器
+            ep_reward_data = [] 
+            agent_cumulative_rewards = {i: 0.0 for i in range(self.num_agents)}
+            
+            final_info = None  # 用于暂存最后一帧的环境数据
+            
             for step in range(self.episode_length):
                 # Sample actions
                 (
@@ -112,6 +118,10 @@ class EnvRunner(Runner):
                     if 'pos' in agent_info:
                         trajectories[i].append(agent_info['pos'])
                     
+                    # [核心新增] 提取单步奖励并计算累积奖励
+                    step_rew = agent_info.get('step_reward', 0.0)
+                    agent_cumulative_rewards[i] += step_rew
+
                     if i < self.n_users: # User
                         lat = agent_info.get('latency', 0)
                         eng = agent_info.get('energy', 0)
@@ -154,6 +164,20 @@ class EnvRunner(Runner):
                                 "Energy_J": eng
                             })
 
+                            # [核心新增] 记录 User 的奖励细项
+                            ep_reward_data.append({
+                                "Step": step,
+                                "Agent_Type": "User",
+                                "Agent_ID": i,
+                                "r_saving": agent_info.get('r_saving', 0),
+                                "r_energy": agent_info.get('r_energy', 0),
+                                "r_coop": agent_info.get('r_coop', 0),
+                                "r_penalty": agent_info.get('r_penalty', 0),
+                                "r_service": 0, "r_uav_energy": 0, "r_guide": 0, "r_collision": 0, "r_bound": 0, # UAV的项补0
+                                "Step_Reward": step_rew,
+                                "Cumulative_Reward": agent_cumulative_rewards[i]
+                            })
+
                     else: # UAV
                     #########################0210zja
                         fly_eng = agent_info.get('fly_energy', 0)
@@ -185,6 +209,21 @@ class EnvRunner(Runner):
                                 "Dist_to_Target": dist_t,
                                  "Min_UAV_Dist": min_d,
                                 "Connected_Users": str(connected_users) # 转字符串方便保存
+                            })
+
+                            # [核心新增] 记录 UAV 的奖励细项
+                            ep_reward_data.append({
+                                "Step": step,
+                                "Agent_Type": "UAV",
+                                "Agent_ID": uav_id,
+                                "r_saving": 0, "r_energy": 0, "r_coop": 0, "r_penalty": 0, # User的项补0
+                                "r_service": agent_info.get('r_service', 0),
+                                "r_uav_energy": agent_info.get('r_uav_energy', 0),
+                                "r_guide": agent_info.get('r_guide', 0),
+                                "r_collision": agent_info.get('r_collision', 0),
+                                "r_bound": agent_info.get('r_bound', 0),
+                                "Step_Reward": step_rew,
+                                "Cumulative_Reward": agent_cumulative_rewards[i]
                             })
                 
                 ep_real_latency_sum += step_latency_sum
@@ -265,8 +304,21 @@ class EnvRunner(Runner):
                 uav_df.to_csv(uav_csv_path, index=False)
                 print(f"  [UAV Doc] Saved to {uav_csv_path}")
 
+                # 3. [核心新增] 保存全量奖励细项数据
+                reward_df = pd.DataFrame(ep_reward_data)
+                reward_csv_path = os.path.join(self.data_dir, f'ep_{episode}_rewards.csv')
+                reward_df.to_csv(reward_csv_path, index=False)
+                print(f"  [Reward Doc] Saved Reward details to {reward_csv_path}")
+
+            # ========================================================
+            # [核心新增] 截获最后一个时隙的数据，为了传给画图函数
+            # ========================================================
+            if step == self.episode_length - 1:
+                final_info = current_info
             # 画图与 Log
-            self.plot_trajectories(trajectories, episode)
+            # self.plot_trajectories(trajectories, episode)
+            # 画图与 Log
+            self.plot_trajectories1(trajectories, episode, final_info)
 
             # save model
             if episode % self.save_interval == 0 or episode == episodes - 1:
@@ -336,41 +388,7 @@ class EnvRunner(Runner):
             if episode % self.eval_interval == 0 and self.use_eval:
                 self.eval(total_num_steps)
 
-    def plot_trajectorieso(self, trajectories, episode):
-        """画出 UAV 和 User 的轨迹"""
-        plt.figure(figsize=(6, 6))
-        plt.xlim(0, 1000)
-        plt.ylim(0, 1000)
-        
-        # 颜色映射
-        colors = plt.cm.get_cmap('tab10', self.num_agents)
-        
-        # 画 Users (0-3)
-        for i in range(self.n_users):
-            traj = np.array(trajectories[i])
-            if len(traj) > 0:
-                # User 移动较慢，画成虚线或点
-                plt.plot(traj[:, 0], traj[:, 1], linestyle=':', alpha=0.5, color='gray')
-                plt.scatter(traj[-1, 0], traj[-1, 1], s=20, marker='o', label=f'U{i}' if i==0 else None, color='blue', alpha=0.5)
-
-        # 画 UAVs (4)
-        for i in range(self.n_users, self.num_agents):
-            traj = np.array(trajectories[i])
-            if len(traj) > 0:
-                # UAV 画实线，带箭头或明显标记
-                plt.plot(traj[:, 0], traj[:, 1], linewidth=2, label=f'UAV{i-10}')
-                plt.scatter(traj[0, 0], traj[0, 1], s=50, marker='x', color='black') # 起点
-                plt.scatter(traj[-1, 0], traj[-1, 1], s=50, marker='*', color='red') # 终点
-
-        plt.title(f'Episode {episode} Trajectories')
-        plt.legend(loc='upper right', fontsize='small')
-        plt.grid(True)
-        
-        # 保存图片
-        save_path = os.path.join(self.plot_dir, f'traj_ep_{episode}.png')
-        plt.savefig(save_path)
-        plt.close() # 关闭画布，防止内存溢出
-
+    
     def plot_trajectories(self, trajectories, episode):
         """画出 UAV 和 User 的轨迹 (点线结合)"""
         plt.figure(figsize=(8, 8))
@@ -420,6 +438,104 @@ class EnvRunner(Runner):
         save_path = os.path.join(self.plot_dir, f'traj_ep_{episode}.png')
         plt.savefig(save_path, dpi=100)
         plt.close()
+    
+    def plot_trajectories1(self, trajectories, episode, final_info=None):
+        """画出 UAV 和 User 的轨迹 (包含动态密集区边界)"""
+        plt.figure(figsize=(8, 8))
+        plt.xlim(0, 1000)
+        plt.ylim(0, 1000)
+        plt.xlabel("X Position (m)")
+        plt.ylabel("Y Position (m)")
+        
+        cmap = plt.get_cmap('tab10')
+        
+        # --- 1. 画 Users ---
+        for i in range(self.n_users):
+            traj = np.array(trajectories[i])
+            if len(traj) > 0:
+                plt.plot(traj[:, 0], traj[:, 1], linestyle=':', alpha=0.3, color='gray', linewidth=1)
+                plt.scatter(traj[:, 0], traj[:, 1], s=5, marker='.', color='gray', alpha=0.3)
+                plt.scatter(traj[-1, 0], traj[-1, 1], s=30, marker='o', label='Users' if i==0 else None, color='blue', alpha=0.6)
+
+        # --- 2. 画 UAVs ---
+        for i in range(self.n_users, self.num_agents):
+            traj = np.array(trajectories[i])
+            if len(traj) > 0:
+                uav_id = i - self.n_users
+                color = cmap(uav_id) 
+                
+                plt.plot(traj[:, 0], traj[:, 1], linewidth=1.5, label=f'UAV {uav_id}', color=color, alpha=0.8)
+                plt.scatter(traj[:, 0], traj[:, 1], s=25, marker='o', color=color, alpha=0.8)
+                plt.scatter(traj[0, 0], traj[0, 1], s=80, marker='x', color='black', zorder=10) 
+                plt.scatter(traj[-1, 0], traj[-1, 1], s=100, marker='*', color='red', zorder=10) 
+
+        # ========================================================
+        # --- 3. [核心新增] 绘制最后一个时隙的动态密集区 ---
+        # ========================================================
+        if final_info is not None:
+            ax = plt.gca()
+            
+            # (1) 绘制全局用户的背景椭圆 (供空载无人机参考，灰色虚线)
+            all_user_pos = np.array([trajectories[u][-1] for u in range(self.n_users)])
+            global_center = np.mean(all_user_pos, axis=0)
+            cov_matrix_global = np.cov(all_user_pos.T) + np.eye(2) * 0.1
+            eigvals_g, eigvecs_g = np.linalg.eig(cov_matrix_global)
+            
+            # 排序特征值和特征向量
+            order_g = eigvals_g.argsort()[::-1]
+            eigvals_g, eigvecs_g = eigvals_g[order_g], eigvecs_g[:, order_g]
+            angle_g = np.degrees(np.arctan2(eigvecs_g[1, 0], eigvecs_g[0, 0]))
+            
+            # 阈值 2.5 (与 env_core 一致)
+            width_g = 2 * 2.5 * np.sqrt(eigvals_g[0])
+            height_g = 2 * 2.5 * np.sqrt(eigvals_g[1])
+            ellipse_g = Ellipse(xy=global_center, width=width_g, height=height_g, angle=angle_g,
+                                edgecolor='gray', fc='gray', lw=1.5, linestyle=':', alpha=0.1, label='Global Area')
+            ax.add_patch(ellipse_g)
+
+            # (2) 绘制各无人机关联的局部动态区 (同色虚线)
+            for i in range(self.n_users, self.num_agents):
+                uav_id = i - self.n_users
+                connected_users = final_info[i].get('connected_users', [])
+                color = cmap(uav_id)
+                
+                if len(connected_users) > 0:
+                    cluster_pos = np.array([trajectories[uid][-1] for uid in connected_users])
+                    target_pos = np.mean(cluster_pos, axis=0)
+                    
+                    if len(connected_users) <= 2:
+                        # 1-2个用户：画圆形
+                        max_dist = np.max(np.linalg.norm(cluster_pos - target_pos, axis=1))
+                        radius = max_dist + 15.0
+                        circle = Circle(target_pos, radius, edgecolor=color, fill=False, linestyle='--', linewidth=2, alpha=0.8)
+                        ax.add_patch(circle)
+                        ax.scatter(target_pos[0], target_pos[1], marker='+', color=color, s=150, zorder=12) # 画出几何中心十字
+                    else:
+                        # >=3个用户：画协方差椭圆
+                        cov_matrix = np.cov(cluster_pos.T) + np.eye(2) * 0.1 
+                        eigvals, eigvecs = np.linalg.eig(cov_matrix)
+                        order = eigvals.argsort()[::-1]
+                        eigvals, eigvecs = eigvals[order], eigvecs[:, order]
+                        
+                        angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
+                        threshold = 2.0 
+                        width = 2 * threshold * np.sqrt(eigvals[0])
+                        height = 2 * threshold * np.sqrt(eigvals[1])
+                        
+                        ellipse = Ellipse(xy=target_pos, width=width, height=height, angle=angle,
+                                          edgecolor=color, fc='None', lw=2, linestyle='--', alpha=0.8)
+                        ax.add_patch(ellipse)
+                        ax.scatter(target_pos[0], target_pos[1], marker='+', color=color, s=150, zorder=12) # 画出几何中心十字
+
+        plt.title(f'Episode {episode} Trajectories & Dense Areas')
+        plt.legend(loc='upper right')
+        plt.grid(True, linestyle='--', alpha=0.6)
+        
+        # 保存图片
+        save_path = os.path.join(self.plot_dir, f'traj_ep_{episode}.png')
+        plt.savefig(save_path, dpi=100)
+        plt.close()
+
     def warmup(self):
         # reset env
         obs = self.envs.reset()  # shape = [env_num, agent_num, obs_dim]

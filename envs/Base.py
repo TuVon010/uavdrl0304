@@ -32,7 +32,7 @@ class Base:
         # =========================
         self.f_c = 2e9            
         self.c = 3e8              
-        self.alpha_los = 2.0      
+        self.alpha_los = 2.8      
         self.alpha_nlos = 3.5     
         self.a = 9.61             # LoS 概率参数
         self.b = 0.16

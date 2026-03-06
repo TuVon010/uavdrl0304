@@ -7,10 +7,12 @@ class Base:
         # =========================
         self.n_uavs = 3
         self.n_users = 10
-        self.field_X = [0, 500]
-        self.field_Y = [0, 500]
-        self.h = 100              # UAV高度 (m)
+        self.field_X = [0, 1000]#修改范围到1000
+        self.field_Y = [0, 1000]
+        self.h = 50              # UAV高度 (m)
         self.time_step = 1.0      # delta_t (s)
+        # [核心新增] 无人机的“免罚覆盖半径” (比如 150 米)
+        self.coverage_radius = 80.0
         
         # =========================
         # 2. 归一化参数 (RL收敛核心)
@@ -32,7 +34,7 @@ class Base:
         # =========================
         self.f_c = 2e9            
         self.c = 3e8              
-        self.alpha_los = 2.0      
+        self.alpha_los = 2.8      
         self.alpha_nlos = 3.5     
         self.a = 9.61             # LoS 概率参数
         self.b = 0.16
@@ -41,7 +43,7 @@ class Base:
         # 这相当于给无人机装了更好的天线，信号增强10倍
         self.beta0 = 10**(-60/10)
         self.sigma2 = 1e-13       # 噪声功率 (W)
-        self.B_total = 50e6       # 每个UAV的总带宽 (50MHz)
+        self.B_total = 20e6       # 每个UAV的总带宽 (50MHz)
 
         # =========================
         # 4. 智能体物理属性
@@ -71,8 +73,8 @@ class Base:
         # 5. Gauss-Markov 移动模型参数 (严格)
         # =========================
         self.mobility_slot = 1.0          # 刷新间隔
-        self.user_mean_velocity = 1     # 渐进平均速度
-        self.user_mean_direction = 0.4    # 渐进平均方向 (rad)
+        self.user_mean_velocity = 0.5     # 渐进平均速度
+        self.user_mean_direction = 0.1    # 渐进平均方向 (rad)
         self.user_memory_level_velocity = 0.6  
         self.user_memory_level_direction = 0.8 
         self.user_Gauss_variance_velocity = 0.5
@@ -85,7 +87,7 @@ class Base:
         self.task_size_max = 5e6
         self.cycles_min = 999
         self.cycles_max = 1000
-        self.latency_max = 3.0    # 最大容忍时延 (s)
+        self.latency_max = 1.0    # 最大容忍时延 (s)
 
         # =========================
         # 7. 奖励权重 (全新：基于节省率的得分系统)
@@ -93,13 +95,13 @@ class Base:
         # 现在系统主要是为了“得分(正数)”，而不是“躲避惩罚(负数)”
         self.w_saving = 10.0       # 节省率得分权重 (核心正奖励)
         self.w_energy = 3.0       # 归一化能耗惩罚权重
-        self.w_guide = 3.0        # 引导权重 (稍微降低，让系统更依赖真实节省率)
+        self.w_guide = 5.0        # 引导权重 (稍微降低，让系统更依赖真实节省率)
         self.w_collision = 5.0    # 防碰撞惩罚权重
         self.w_penalty = 5.0      # 时延超标惩罚
         
         self.omega_H = 1.2        # 高优先级加权
         self.omega_L = 1.0        
-        self.coop_gamma = 0.6     # 合作因子
+        self.coop_gamma = 0.9     # 合作因子
         
         # 互斥参数
         self.uav_safe_dist = 10.0
