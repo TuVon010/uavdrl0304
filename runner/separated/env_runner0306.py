@@ -10,7 +10,7 @@ import torch
 from utils.util import update_linear_schedule
 from runner.separated.base_runner import Runner
 # 文件顶部，大约在 import torch 下方加入这一行
-from envs.Base0305 import Base
+from envs.Base0306 import Base
 
 def _t2n(x):
     return x.detach().cpu().numpy()
@@ -169,11 +169,11 @@ class EnvRunner(Runner):
                                 "Step": step,
                                 "Agent_Type": "User",
                                 "Agent_ID": i,
-                                "r_saving": agent_info.get('r_saving', 0),
-                                "r_energy": agent_info.get('r_energy', 0),
-                                "r_coop": agent_info.get('r_coop', 0),
-                                "r_penalty": agent_info.get('r_penalty', 0),
-                                "r_service": 0, "r_uav_energy": 0, "r_guide": 0, "r_collision": 0, "r_bound": 0, # UAV的项补0
+                                "r_global_saving": agent_info.get('r_global_saving', 0),
+                                "r_global_energy": agent_info.get('r_global_energy', 0),
+                                "r_system": agent_info.get('r_system', 0),
+                                "r_global_penalty": agent_info.get('r_global_penalty', 0),
+                                "r_guide": 0, "r_idle": 0,"r_collision": 0, "r_bound": 0, # UAV的项补0
                                 "Step_Reward": step_rew,
                                 "Cumulative_Reward": agent_cumulative_rewards[i]
                             })
@@ -216,12 +216,14 @@ class EnvRunner(Runner):
                                 "Step": step,
                                 "Agent_Type": "UAV",
                                 "Agent_ID": uav_id,
-                                "r_saving": 0, "r_energy": 0,  "r_penalty": 0, # User的项补0
-                                "r_coop": agent_info.get('r_coop', 0), # <=== 这里改掉
-                                "r_service": agent_info.get('r_service', 0),
-                                "r_uav_energy": agent_info.get('r_uav_energy', 0),
+                
+                                "r_global_saving": agent_info.get('r_global_saving', 0),
+                                "r_global_energy": agent_info.get('r_global_energy', 0),
+                                "r_system": agent_info.get('r_system', 0),
+                                "r_global_penalty": agent_info.get('r_global_penalty', 0),
                                 "r_guide": agent_info.get('r_guide', 0),
                                 "r_collision": agent_info.get('r_collision', 0),
+                                "r_idle": agent_info.get('r_idle', 0), # 👈 【新增这一行，提取怠工惩罚】
                                 "r_bound": agent_info.get('r_bound', 0),
                                 "Step_Reward": step_rew,
                                 "Cumulative_Reward": agent_cumulative_rewards[i]
@@ -235,11 +237,7 @@ class EnvRunner(Runner):
                 # [修改前] ep_user_saving_rate_sum += (step_user_saving_rate / 4.0) 
                 ep_user_saving_rate_sum += (step_user_saving_rate / float(self.n_users))
                 # 这个 slot 所有 UAV 的平均距离
-                # [修改前]
-                # ep_uav_target_dist_sum += (step_uav_dist / 3.0)
-                # ep_uav_min_dist_sum += (step_uav_min / 3.0)
-                # 这个 slot 所有 UAV 的平均距离 (恢复除法，变成动态)
-                # [修改前] ep_uav_target_dist_sum += step_uav_dist 
+               
                 ep_uav_target_dist_sum += (step_uav_dist / float(self.n_uavs))
                 ep_uav_min_dist_sum += (step_uav_min / float(self.n_uavs))
                 
